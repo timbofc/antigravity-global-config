@@ -4,18 +4,19 @@ param()
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $Updater = Join-Path $PSScriptRoot "Update-GlobalConfig.ps1"
-$TaskName = "AntigravityGlobalConfigSync"
 $CurrentUser = "$env:USERDOMAIN\$env:USERNAME"
 
-if (!(Test-Path -LiteralPath $Updater)) { throw "Script de atualização não encontrado: $Updater" }
+if (!(Test-Path -LiteralPath $Updater)) {
+    throw "Script de atualização não encontrado: $Updater"
+}
 
 $PowerShell = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
-if (!$PowerShell) { $PowerShell = (Get-Command pwsh.exe -ErrorAction Stop).Source }
+if (!$PowerShell) {
+    $PowerShell = (Get-Command pwsh.exe -ErrorAction Stop).Source
+}
 
 $arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Updater`""
 $action = New-ScheduledTaskAction -Execute $PowerShell -Argument $arguments -WorkingDirectory $RepoRoot
-$logon = New-ScheduledTaskTrigger -AtLogOn -User $CurrentUser
-$daily = New-ScheduledTaskTrigger -Daily -At "08:00"
 
 $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
@@ -24,12 +25,34 @@ $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
 
-$principal = New-ScheduledTaskPrincipal -UserId $CurrentUser -LogonType Interactive -RunLevel Limited
-$task = New-ScheduledTask -Action $action -Trigger @($logon, $daily) -Settings $settings -Principal $principal
+# Registrar duas tarefas separadas evita ambiguidades entre conjuntos de parâmetros.
+$tasks = @(
+    @{
+        Name = "AntigravityGlobalConfigSync-Logon"
+        Trigger = (New-ScheduledTaskTrigger -AtLogOn -User $CurrentUser)
+        Description = "Sincroniza as regras e skills globais do Antigravity ao entrar no Windows."
+    },
+    @{
+        Name = "AntigravityGlobalConfigSync-Daily"
+        Trigger = (New-ScheduledTaskTrigger -Daily -At "08:00")
+        Description = "Sincroniza diariamente as regras e skills globais do Antigravity."
+    }
+)
 
-Register-ScheduledTask -TaskName $TaskName -InputObject $task `
-    -Description "Atualiza regras e skills globais do Antigravity a partir do repositório Git privado." `
-    -Force | Out-Null
+foreach ($task in $tasks) {
+    Register-ScheduledTask `
+        -TaskName $task.Name `
+        -Action $action `
+        -Trigger $task.Trigger `
+        -Settings $settings `
+        -Description $task.Description `
+        -User $CurrentUser `
+        -RunLevel Limited `
+        -Force | Out-Null
 
-Write-Host "Tarefa '$TaskName' registrada para $CurrentUser." -ForegroundColor Green
-Write-Host "Execução ao entrar no Windows e diariamente às 08:00." -ForegroundColor Cyan
+    Write-Host "[REGISTRADA] $($task.Name)" -ForegroundColor Green
+}
+
+Write-Host "`nSincronização automática configurada:" -ForegroundColor Cyan
+Write-Host "- Ao entrar no Windows"
+Write-Host "- Diariamente às 08:00"
